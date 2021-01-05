@@ -228,7 +228,7 @@ random_mac () {
     name=$1
     net=$2
     mac=$(echo $name-$net | sha1sum | \
-        awk '{print "50:54:" substr($1,0,2) ":" substr($1, 2, 2) ":" substr($1, 4, 2) ":" substr($1, 6, 2)}')
+        awk '{print "50:54:" substr($1, 1,2) ":" substr($1, 3, 2) ":" substr($1, 5, 2) ":" substr($1, 7, 2)}')
     echo $mac
 }
 
@@ -241,8 +241,8 @@ start_vm () {
     IFS=,
     for net in $NET; do
         mac=$(random_mac $name $net)
-        netargs="$netargs -net nic,model=virtio,macaddr=$mac,vlan=$net"
-        netargs="$netargs -net vde,sock=$TMP/switch-$net.sock,vlan=$net"
+        netargs="$netargs -device virtio-net,mac=$mac,netdev=vlan$net"
+        netargs="$netargs -netdev vde,sock=$TMP/switch-$net.sock,id=vlan$net"
     done
     IFS="$saveifs"
 
@@ -256,7 +256,7 @@ start_vm () {
         exec start-stop-daemon --make-pidfile --pidfile "$TMP/vm-$name.pid" \
         --start --startas $(which qemu-system-x86_64) -- \
         -enable-kvm \
-        -nodefconfig -nodefaults \
+        -no-user-config -nodefaults \
         -display none \
         -m ${MEM:-128M} \
         \
@@ -266,7 +266,7 @@ start_vm () {
         -device isa-serial,chardev=charserial1,id=serial1 \
         \
         -chardev socket,id=con0,path=$TMP/vm-$name-console.pipe,server,nowait \
-        -mon chardev=con0,mode=readline,default \
+        -mon chardev=con0,mode=readline \
         \
         -fsdev local,security_model=passthrough,id=fsdev-root,path=${ROOT} \
         -device virtio-9p-pci,id=fs-root,fsdev=fsdev-root,mount_tag=rootshare \
@@ -292,6 +292,7 @@ EOF
     log_info_msg "ttyS1 listening on      $TMP/vm-$name-serial.pipe"
     chmod +x "$TMP/vm-$name.exec"
     tmux new-window -n $name "$TMP/vm-$name.exec"
+    tmux set-window-option -t $name remain-on-exit on
     tmux select-window -t ":^"
 }
 
@@ -461,13 +462,13 @@ case $$,$STATE in
         log_ok_msg "udev started"
 
         log_info_msg "Setup interfaces"
-        modprobe dummy 2>/dev/null || true
+        ip link add type dummy
         sleep 0.5               # Some interfaces may take some time to appear
         for intf in /sys/class/net/*; do
             intf=$(basename $intf)
             ip a l dev $intf 2> /dev/null >/dev/null || continue
             case $intf in
-                lo|eth*|dummy*)
+                lo|ens*|dummy*)
                     ip link set up dev $intf
                     ;;
             esac
@@ -565,32 +566,32 @@ EOF
 
         case $uts in
             r1)
-                ip -6 addr add 2001:db8:1000::1/120 dev eth0
+                ip -6 addr add 2001:db8:1000::1/120 dev ens7
                 ip -6 addr add 2001:db8:2000::1/64 dev dummy0
                 ;;
             er*)
                 nb=${uts#er}
-                ip -6 addr add 2001:db8:1000::${nb}/120 dev eth0
-                ip -6 addr add 2001:db8:1::${nb}/64 dev eth1
+                ip -6 addr add 2001:db8:1000::${nb}/120 dev ens7
+                ip -6 addr add 2001:db8:1::${nb}/64 dev ens8
                 ;;
             rs4)
-                ip -6 addr add 2001:db8:1::4/64 dev eth0
+                ip -6 addr add 2001:db8:1::4/64 dev ens7
                 ;;
             rs5)
-                ip -6 addr add 2001:db8:8::5/64 dev eth0
-                ip -6 route add default via 2001:db8:8::8 dev eth0
+                ip -6 addr add 2001:db8:8::5/64 dev ens7
+                ip -6 route add default via 2001:db8:8::8 dev ens7
                 ;;
             dr*)
                 nb=${uts#dr}
-                ip -6 addr add 2001:db8:1::${nb}/64 dev eth0
-                ip -6 addr add 2001:db8:${nb}::${nb}/64 dev eth1
+                ip -6 addr add 2001:db8:1::${nb}/64 dev ens7
+                ip -6 addr add 2001:db8:${nb}::${nb}/64 dev ens8
                 ;;
             w*)
                 nb=${uts#w}
                 ip -6 addr add 2001:db8:30::1/128 dev lo
                 ip -6 addr add 2001:db8:30::2/128 dev lo
                 ip -6 addr add 2001:db8:30::3/128 dev lo
-                ip -6 addr add 2001:db8:$((${nb}+5))::1${nb}/64 dev eth0
+                ip -6 addr add 2001:db8:$((${nb}+5))::1${nb}/64 dev ens7
                 ip -6 route add default via 2001:db8:$((${nb}+5))::$((${nb}+5))
                 start_nginx
                 start_exabgp
